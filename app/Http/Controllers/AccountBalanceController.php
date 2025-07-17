@@ -67,7 +67,8 @@ class AccountBalanceController extends Controller
         $data['nequi_kem'] = (float)($data['nequi_kem'] ?? 0);
         $data['cash_balance'] = (float)($data['cash_balance'] ?? 0);
         $data['total_balance'] = $data['bank_balance'] + $data['nequi_aleja'] + $data['nequi_kem'] + $data['cash_balance'];
-        $data['date'] = now()->toDateString(); // Asegurar que use la fecha actual
+        // Usar la zona horaria de Colombia y guardar como string 'Y-m-d'
+        $data['date'] = now('America/Bogota')->toDateString();
         $data['is_closed'] = false; // Marcar como no cerrada
         $data['type'] = 'manual'; // Guardar como balance manual
         $balance = AccountBalance::create($data);
@@ -120,14 +121,13 @@ class AccountBalanceController extends Controller
     public function latest(Request $request)
     {
         $userId = $request->user()->id ?? 1; // Temporal: userId 1 si no hay auth
-        
+        $todayString = now('America/Bogota')->toDateString();
         // Buscar el balance más reciente de hoy que NO esté cerrado
         $latest = AccountBalance::where('user_id', $userId)
-            ->where('date', now()->toDateString())
+            ->where('date', $todayString)
             ->where('is_closed', false)
             ->orderBy('created_at', 'desc')
             ->first();
-            
         // Si no hay balance abierto de hoy, buscar el más reciente de cualquier fecha
         if (!$latest) {
             $latest = AccountBalance::where('user_id', $userId)
@@ -210,7 +210,7 @@ class AccountBalanceController extends Controller
         $closingBalance = $latest->total_balance;
         
         // Determinar si la caja está abierta: si hay un balance de hoy que no esté cerrado
-        $isOpen = $latest && $latest->date === now()->toDateString() && !($latest->is_closed ?? false);
+        $isOpen = $latest && $latest->date === $todayString && !($latest->is_closed ?? false);
         
         // \Log::info('Fecha del balance coincide con hoy: ' . ($latest->date === now()->toDateString() ? 'SÍ' : 'NO'));
         // \Log::info('Caja cerrada en BD: ' . ($latest->is_closed ?? false ? 'SÍ' : 'NO'));
