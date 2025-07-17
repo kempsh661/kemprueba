@@ -60,6 +60,30 @@ class AccountBalanceController extends Controller
     public function store(Request $request)
     {
         $userId = $request->user()->id ?? 1; // Temporal: userId 1 si no hay auth
+        $todayString = now('America/Bogota')->toDateString();
+        // Verificar si ya existe una apertura de caja para hoy que no esté cerrada
+        $existing = AccountBalance::where('user_id', $userId)
+            ->where('date', $todayString)
+            ->where('is_closed', false)
+            ->first();
+        if ($existing) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ya existe una apertura de caja para hoy que no está cerrada.',
+                'data' => [
+                    'id' => $existing->id,
+                    'date' => $existing->date,
+                    'bankBalance' => (float) $existing->bank_balance,
+                    'nequiAleja' => (float) $existing->nequi_aleja,
+                    'nequiKem' => (float) $existing->nequi_kem,
+                    'cashBalance' => (float) $existing->cash_balance,
+                    'totalBalance' => (float) $existing->total_balance,
+                    'notes' => $existing->notes,
+                    'created_at' => $existing->created_at,
+                    'updated_at' => $existing->updated_at
+                ]
+            ], 409);
+        }
         $data = $request->only(['bank_balance', 'nequi_aleja', 'nequi_kem', 'cash_balance', 'notes']);
         $data['user_id'] = $userId;
         $data['bank_balance'] = (float)($data['bank_balance'] ?? 0);
@@ -67,13 +91,10 @@ class AccountBalanceController extends Controller
         $data['nequi_kem'] = (float)($data['nequi_kem'] ?? 0);
         $data['cash_balance'] = (float)($data['cash_balance'] ?? 0);
         $data['total_balance'] = $data['bank_balance'] + $data['nequi_aleja'] + $data['nequi_kem'] + $data['cash_balance'];
-        // Usar la zona horaria de Colombia y guardar como string 'Y-m-d'
-        $data['date'] = now('America/Bogota')->toDateString();
+        $data['date'] = $todayString; // Usar siempre la fecha de hoy en zona horaria Colombia
         $data['is_closed'] = false; // Marcar como no cerrada
         $data['type'] = 'manual'; // Guardar como balance manual
         $balance = AccountBalance::create($data);
-        
-        // Transformar la respuesta para que coincida con el formato esperado por el frontend
         $transformedBalance = [
             'id' => $balance->id,
             'date' => $balance->date,
@@ -86,7 +107,6 @@ class AccountBalanceController extends Controller
             'created_at' => $balance->created_at,
             'updated_at' => $balance->updated_at
         ];
-        
         return response()->json([
             'success' => true,
             'data' => $transformedBalance
