@@ -142,43 +142,25 @@ class AccountBalanceController extends Controller
     {
         $userId = $request->user()->id ?? 1; // Temporal: userId 1 si no hay auth
         $todayString = now('America/Bogota')->toDateString();
+        
         // Buscar el balance más reciente de hoy que NO esté cerrado
         $latest = AccountBalance::where('user_id', $userId)
             ->where('date', $todayString)
             ->where('is_closed', false)
             ->orderBy('created_at', 'desc')
             ->first();
-        // Si no hay balance abierto de hoy, buscar el más reciente de cualquier fecha
-        if (!$latest) {
-            $latest = AccountBalance::where('user_id', $userId)
-                ->orderBy('date', 'desc')
-                ->orderBy('created_at', 'desc')
-                ->first();
-        }
             
-        // Debug: mostrar información de la caja (comentado para producción)
-        // \Log::info('=== DEBUG CAJA ===');
-        // \Log::info('Usuario ID: ' . $userId);
-        // \Log::info('Fecha actual: ' . now()->toDateString());
-        // \Log::info('Balance más reciente encontrado: ' . ($latest ? 'SÍ' : 'NO'));
-        
-        // if ($latest) {
-        //     \Log::info('Fecha del balance: ' . $latest->date);
-        //     \Log::info('Is closed: ' . ($latest->is_closed ? 'SÍ' : 'NO'));
-        //     \Log::info('Total balance: ' . $latest->total_balance);
-        // }
-            
-        // Obtener estadísticas de ventas de hoy (usando la fecha actual en zona horaria de Colombia)
+        // Obtener estadísticas de ventas de hoy
         $today = now()->startOfDay();
         
         $todaySales = \App\Models\Sale::where('user_id', $userId)
             ->whereDate('created_at', $today)
             ->get();
             
-        // Calcular totales por método de pago
-        $cashTotal = $todaySales->where('payment_method', 'CASH')->sum('total');
-        $cardTotal = $todaySales->where('payment_method', 'CARD')->sum('total');
-        $transferTotal = $todaySales->where('payment_method', 'TRANSFER')->sum('total');
+        // Calcular totales por método de pago (usando minúsculas como en la BD)
+        $cashTotal = $todaySales->where('payment_method', 'cash')->sum('total');
+        $cardTotal = $todaySales->where('payment_method', 'card')->sum('total');
+        $transferTotal = $todaySales->where('payment_method', 'transfer')->sum('total');
         $totalSales = $todaySales->sum('total');
         
         // Obtener gastos de hoy (compras + costos fijos)
@@ -194,9 +176,8 @@ class AccountBalanceController extends Controller
             
         $expenses = $todayPurchases + $todayFixedCosts;
         
-        // Si no hay registros de balance, devolver un balance vacío con estadísticas
+        // Si no hay registros de balance abierto de hoy, devolver caja cerrada
         if (!$latest) {
-            // \Log::info('No hay balance - caja cerrada');
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -211,31 +192,21 @@ class AccountBalanceController extends Controller
                     'totalSales' => $totalSales,
                     'expenses' => $expenses,
                     'profit' => $totalSales - $expenses,
-                    'isOpen' => false, // Caja cerrada si no hay registros
+                    'isOpen' => false, // Caja cerrada si no hay registros abiertos de hoy
                     'created_at' => now(),
                     'updated_at' => now()
                 ]
             ]);
         }
         
-        // Calcular balance de apertura (balance anterior)
-        $previousBalance = AccountBalance::where('user_id', $userId)
-            ->where('date', '<', $latest->date)
-            ->orderBy('date', 'desc')
-            ->first();
-            
-        $openingBalance = $previousBalance ? $previousBalance->total_balance : 0;
+        // Si hay balance abierto de hoy, usar el cash_balance como saldo inicial
+        $openingBalance = $latest->cash_balance; // El saldo inicial es el cash_balance que se ingresó al abrir
         
-        // Calcular balance de cierre (balance actual)
-        $closingBalance = $latest->total_balance;
+        // Calcular balance de cierre: saldo inicial + ventas en efectivo - gastos
+        $closingBalance = $openingBalance + $cashTotal - $expenses;
         
         // Determinar si la caja está abierta: si hay un balance de hoy que no esté cerrado
         $isOpen = $latest && $latest->date === $todayString && !($latest->is_closed ?? false);
-        
-        // \Log::info('Fecha del balance coincide con hoy: ' . ($latest->date === now()->toDateString() ? 'SÍ' : 'NO'));
-        // \Log::info('Caja cerrada en BD: ' . ($latest->is_closed ?? false ? 'SÍ' : 'NO'));
-        // \Log::info('Resultado final - Caja abierta: ' . ($isOpen ? 'SÍ' : 'NO'));
-        // \Log::info('=== FIN DEBUG CAJA ===');
         
         return response()->json([
             'success' => true,
@@ -262,10 +233,13 @@ class AccountBalanceController extends Controller
     public function closeCash(Request $request)
     {
         $userId = $request->user()->id ?? 1;
+        $todayString = now('America/Bogota')->toDateString();
         
-        // Buscar el balance más reciente
+        // Buscar el balance abierto de hoy
         $latest = AccountBalance::where('user_id', $userId)
-            ->orderBy('date', 'desc')
+            ->where('date', $todayString)
+            ->where('is_closed', false)
+            ->orderBy('created_at', 'desc')
             ->first();
             
         if (!$latest) {
@@ -275,15 +249,56 @@ class AccountBalanceController extends Controller
             ], 400);
         }
         
-        // Marcar la caja como cerrada
+        // Obtener estadísticas de ventas de hoy
+        $today = now()->startOfDay();
+        
+        $todaySales = \App\Models\Sale::where('user_id', $userId)
+            ->whereDate('created_at', $today)
+            ->get();
+            
+        // Calcular totales por método de pago (usando minúsculas como en la BD)
+        $cashTotal = $todaySales->where('payment_method', 'cash')->sum('total');
+        $cardTotal = $todaySales->where('payment_method', 'card')->sum('total');
+        $transferTotal = $todaySales->where('payment_method', 'transfer')->sum('total');
+        $totalSales = $todaySales->sum('total');
+        
+        // Obtener gastos de hoy
+        $todayPurchases = \App\Models\Purchase::where('user_id', $userId)
+            ->whereDate('date', $today)
+            ->sum('amount');
+            
+        $todayFixedCosts = \App\Models\FixedCost::where('user_id', $userId)
+            ->where('is_active', true)
+            ->where('is_paid', true)
+            ->whereDate('updated_at', $today)
+            ->sum('amount');
+            
+        $expenses = $todayPurchases + $todayFixedCosts;
+        
+        // Calcular saldo inicial y final
+        $openingBalance = $latest->cash_balance; // Saldo inicial ingresado al abrir
+        $closingBalance = $openingBalance + $cashTotal - $expenses; // Saldo final calculado
+        
+        // Marcar la caja como cerrada y actualizar el saldo final
         $latest->update([
             'is_closed' => true,
+            'total_balance' => $closingBalance, // Actualizar el saldo total con el cálculo final
             'notes' => $request->notes || 'Cierre de caja'
         ]);
         
         return response()->json([
             'success' => true,
-            'message' => 'Caja cerrada exitosamente'
+            'message' => 'Caja cerrada exitosamente',
+            'data' => [
+                'openingBalance' => $openingBalance,
+                'cashTotal' => $cashTotal,
+                'cardTotal' => $cardTotal,
+                'transferTotal' => $transferTotal,
+                'totalSales' => $totalSales,
+                'expenses' => $expenses,
+                'closingBalance' => $closingBalance,
+                'profit' => $totalSales - $expenses
+            ]
         ]);
     }
     
@@ -306,7 +321,7 @@ class AccountBalanceController extends Controller
                     return [
                         'id' => $sale->id,
                         'created_at' => $sale->created_at->format('Y-m-d H:i:s'),
-                        'sale_date' => $sale->sale_date ? $sale->sale_date->format('Y-m-d') : null,
+                        'saleDate' => $sale->sale_date ? $sale->sale_date->format('Y-m-d') : null,
                         'total' => $sale->total
                     ];
                 }),
@@ -345,6 +360,21 @@ class AccountBalanceController extends Controller
                 ];
             });
             
+        // Obtener ventas de hoy para debug
+        $today = now()->startOfDay();
+        $todaySales = \App\Models\Sale::where('user_id', $userId)
+            ->whereDate('created_at', $today)
+            ->get();
+            
+        $salesDebug = $todaySales->map(function ($sale) {
+            return [
+                'id' => $sale->id,
+                'total' => $sale->total,
+                'payment_method' => $sale->payment_method,
+                'created_at' => $sale->created_at->format('Y-m-d H:i:s')
+            ];
+        });
+            
         $debugInfo = [
             'current_date' => now()->toDateString(),
             'timezone' => config('app.timezone'),
@@ -362,7 +392,10 @@ class AccountBalanceController extends Controller
                 'is_closed_in_db' => $latest ? ($latest->is_closed ?? false) : false,
                 'final_result' => $latest ? ($latest->date === now()->toDateString() && !($latest->is_closed ?? false)) : false
             ],
-            'all_recent_balances' => $allBalances
+            'all_recent_balances' => $allBalances,
+            'today_sales_count' => $todaySales->count(),
+            'today_sales' => $salesDebug,
+            'payment_methods_found' => $todaySales->pluck('payment_method')->unique()->values()
         ];
         
         return response()->json([

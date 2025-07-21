@@ -14,10 +14,13 @@ class SaleController extends Controller
         $userId = $request->user()->id;
         $query = Sale::where('user_id', $userId);
         
-        // Búsqueda por fecha (solo en sale_date)
+        // Búsqueda por fecha (considerar tanto sale_date como created_at)
         if ($request->has('date') && $request->date) {
             $date = $request->date;
-            $query->whereDate('sale_date', $date);
+            $query->where(function($q) use ($date) {
+                $q->whereDate('sale_date', $date)
+                  ->orWhereDate('created_at', $date);
+            });
         }
         
         // Búsqueda por documento del cliente
@@ -42,7 +45,7 @@ class SaleController extends Controller
                 $cashAmount = (float) ($sale->cash_received ?? 0);
                 $creditAmount = (float) ($sale->remaining_balance ?? 0);
             } elseif ($sale->payment_method === 'credit') {
-                $creditAmount = (float) $sale->total;
+                $creditAmount = (float) ($sale->total);
             } else {
                 $cashAmount = (float) $sale->total;
             }
@@ -82,10 +85,7 @@ class SaleController extends Controller
                 'creditAmount' => $creditAmount,
                 'remainingBalance' => (float) ($sale->remaining_balance ?? 0),
                 'status' => $sale->status ?? 'COMPLETED',
-                'saleDate' => $sale->sale_date
-                    ? $sale->sale_date->setTimezone('America/Bogota')->toISOString()
-                    : $sale->created_at->setTimezone('America/Bogota')->toISOString(),
-                'createdAt' => $sale->created_at->setTimezone('America/Bogota')->toISOString(),
+                'createdAt' => $sale->created_at->toISOString(),
                 'reversalReason' => $sale->reversal_reason,
                 'reversedAt' => $sale->reversed_at ? $sale->reversed_at->toISOString() : null,
                 'user' => [
@@ -116,8 +116,6 @@ class SaleController extends Controller
 
     public function store(Request $request)
     {
-        \Log::info('DEBUG: Entró al método store de SaleController', $request->all());
-        \Log::info('DEBUG: Valor recibido en $request->date', ['date' => $request->date]);
         $userId = $request->user()->id;
         
         // Validar datos requeridos
@@ -131,32 +129,7 @@ class SaleController extends Controller
             'total' => 'required|numeric|min:0',
             'subtotal' => 'required|numeric|min:0',
             'paymentMethod' => 'required|string|in:cash,card,transfer,credit,combined',
-            'date' => 'nullable|string',
         ]);
-        
-        // Validar formato de fecha si viene en el request
-        if ($request->filled('date')) {
-            $date = $request->date;
-            // Acepta YYYY-MM-DD o YYYY-MM-DD HH:mm:ss
-            $pattern = '/^\\d{4}-\\d{2}-\\d{2}( \\d{2}:\\d{2}:\\d{2})?$/';
-            if (!preg_match($pattern, $date)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'El campo fecha debe tener formato YYYY-MM-DD o YYYY-MM-DD HH:mm:ss',
-                ], 422);
-            }
-            try {
-                // Intentar parsear la fecha
-                $parsedDate = strlen($date) <= 10
-                    ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $date . ' 00:00:00', 'America/Bogota')
-                    : \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $date, 'America/Bogota');
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'La fecha proporcionada no es válida.',
-                ], 422);
-            }
-        }
         
         // Verificar si el cliente ya existe, si no, crearlo automáticamente
         $customer = \App\Models\Customer::where('user_id', $userId)
@@ -190,10 +163,7 @@ class SaleController extends Controller
             'change' => $request->change,
             'transaction_number' => $request->transactionNumber,
             'payments' => $request->payments,
-            // Guardar fecha y hora reales de Bogotá
-            'sale_date' => $request->filled('date')
-                ? \Carbon\Carbon::parse($request->date, 'America/Bogota')
-                : now('America/Bogota'),
+            'sale_date' => $request->date ?? now()->toDateString(),
             'items' => $request->items,
             'status' => 'COMPLETED',
         ];
@@ -230,51 +200,10 @@ class SaleController extends Controller
             }
         }
         
-        // Transformar la venta para la respuesta (igual que en index)
-        $transformedSale = [
-            'id' => $sale->id,
-            'customerName' => $sale->customer_name,
-            'customerDocument' => $sale->customer_document,
-            'customerPhone' => $sale->customer_phone,
-            'customerEmail' => $sale->customer_email,
-            'total' => (float) $sale->total,
-            'subtotal' => (float) $sale->subtotal,
-            'tax' => (float) $sale->tax,
-            'discount' => (float) $sale->discount,
-            'paymentMethod' => $sale->payment_method,
-            'paymentDescription' => '', // Puedes calcularlo igual que en index si lo necesitas
-            'transactionNumber' => $sale->transaction_number,
-            'cashReceived' => $sale->cash_received ? (float) $sale->cash_received : null,
-            'change' => $sale->change ? (float) $sale->change : null,
-            'cashAmount' => $sale->payment_method === 'credit' ? 0 : (float) $sale->total,
-            'creditAmount' => $sale->payment_method === 'credit' ? (float) $sale->total : 0,
-            'remainingBalance' => (float) ($sale->remaining_balance ?? 0),
-            'status' => $sale->status ?? 'COMPLETED',
-            'saleDate' => $sale->sale_date ? $sale->sale_date->setTimezone('America/Bogota')->toISOString() : null,
-            'createdAt' => $sale->created_at->setTimezone('America/Bogota')->toISOString(),
-            'reversalReason' => $sale->reversal_reason,
-            'reversedAt' => $sale->reversed_at ? $sale->reversed_at->toISOString() : null,
-            'user' => [
-                'name' => $sale->user->name ?? 'Usuario'
-            ],
-            'details' => $sale->items ? array_map(function ($item) {
-                $product = \App\Models\Product::find($item['productId'] ?? 0);
-                return [
-                    'id' => $item['productId'] ?? 0,
-                    'productId' => $item['productId'] ?? 0,
-                    'quantity' => $item['quantity'] ?? 0,
-                    'price' => (float) ($item['price'] ?? 0),
-                    'product' => [
-                        'name' => $product ? $product->name : 'Producto',
-                        'code' => $product ? $product->code : 'PROD'
-                    ]
-                ];
-            }, $sale->items) : []
-        ];
         return response()->json([
             'success' => true,
             'message' => 'Venta creada exitosamente',
-            'data' => $transformedSale,
+            'data' => $sale,
             'customer_created' => $customer->wasRecentlyCreated
         ], 201);
     }
@@ -349,17 +278,123 @@ class SaleController extends Controller
         ]);
     }
 
+    public function search(Request $request)
+    {
+        $userId = $request->user()->id;
+        $query = Sale::where('user_id', $userId);
+        
+        // Búsqueda por fecha (considerar tanto sale_date como created_at)
+        if ($request->has('date') && $request->date) {
+            $date = $request->date;
+            $query->where(function($q) use ($date) {
+                $q->whereDate('sale_date', $date)
+                  ->orWhereDate('created_at', $date);
+            });
+        }
+        
+        // Búsqueda por documento del cliente
+        if ($request->has('customerDocument') && $request->customerDocument) {
+            $query->where('customer_document', 'like', '%' . $request->customerDocument . '%');
+        }
+        
+        // Búsqueda por nombre del cliente
+        if ($request->has('customerName') && $request->customerName) {
+            $query->where('customer_name', 'like', '%' . $request->customerName . '%');
+        }
+        
+        $sales = $query->orderBy('created_at', 'desc')->get();
+        
+        // Transformar las ventas igual que en el método index
+        $transformedSales = $sales->map(function ($sale) {
+            // Calcular montos de efectivo y crédito para facturas
+            $cashAmount = 0;
+            $creditAmount = 0;
+            
+            if ($sale->payment_method === 'combined') {
+                $cashAmount = (float) ($sale->cash_received ?? 0);
+                $creditAmount = (float) ($sale->remaining_balance ?? 0);
+            } elseif ($sale->payment_method === 'credit') {
+                $creditAmount = (float) ($sale->total);
+            } else {
+                $cashAmount = (float) $sale->total;
+            }
+            
+            // Generar descripción descriptiva del pago
+            $paymentDescription = '';
+            if ($sale->payment_method === 'combined') {
+                if ($cashAmount > 0 && $creditAmount > 0) {
+                    $paymentDescription = "Pagado: $" . number_format($cashAmount, 2) . " en efectivo, $" . number_format($creditAmount, 2) . " a crédito";
+                } elseif ($cashAmount > 0) {
+                    $paymentDescription = "Pagado: $" . number_format($cashAmount, 2) . " en efectivo";
+                } elseif ($creditAmount > 0) {
+                    $paymentDescription = "Pagado: $" . number_format($creditAmount, 2) . " a crédito";
+                }
+            } elseif ($sale->payment_method === 'credit') {
+                $paymentDescription = "Pagado: $" . number_format($creditAmount, 2) . " a crédito";
+            } else {
+                $paymentDescription = "Pagado: $" . number_format($cashAmount, 2) . " en efectivo";
+            }
+            
+            return [
+                'id' => $sale->id,
+                'customerName' => $sale->customer_name,
+                'customerDocument' => $sale->customer_document,
+                'customerPhone' => $sale->customer_phone,
+                'customerEmail' => $sale->customer_email,
+                'total' => (float) $sale->total,
+                'subtotal' => (float) $sale->subtotal,
+                'tax' => (float) $sale->tax,
+                'discount' => (float) $sale->discount,
+                'paymentMethod' => $sale->payment_method,
+                'paymentDescription' => $paymentDescription,
+                'transactionNumber' => $sale->transaction_number,
+                'cashReceived' => $sale->cash_received ? (float) $sale->cash_received : null,
+                'change' => $sale->change ? (float) $sale->change : null,
+                'cashAmount' => $cashAmount,
+                'creditAmount' => $creditAmount,
+                'remainingBalance' => (float) ($sale->remaining_balance ?? 0),
+                'status' => $sale->status ?? 'COMPLETED',
+                'createdAt' => $sale->created_at->toISOString(),
+                'saleDate' => $sale->sale_date ? $sale->sale_date->toDateString() : null,
+                'reversalReason' => $sale->reversal_reason,
+                'reversedAt' => $sale->reversed_at ? $sale->reversed_at->toISOString() : null,
+                'user' => [
+                    'name' => $sale->user->name ?? 'Usuario'
+                ],
+                'details' => $sale->items ? array_map(function ($item) {
+                    // Buscar el producto real para obtener su nombre
+                    $product = \App\Models\Product::find($item['productId'] ?? 0);
+                    return [
+                        'id' => $item['productId'] ?? 0,
+                        'productId' => $item['productId'] ?? 0,
+                        'quantity' => $item['quantity'] ?? 0,
+                        'price' => (float) ($item['price'] ?? 0),
+                        'product' => [
+                            'name' => $product ? $product->name : 'Producto',
+                            'code' => $product ? $product->code : 'PROD'
+                        ]
+                    ];
+                }, $sale->items) : []
+            ];
+        });
+        
+        return response()->json([
+            'success' => true,
+            'data' => $transformedSales
+        ]);
+    }
+
     public function stats(Request $request)
     {
         $userId = $request->user()->id;
         
         // Estadísticas de ventas
         $monthlySales = Sale::where('user_id', $userId)
-            ->whereMonth('sale_date', Carbon::now()->month)
+            ->whereMonth('created_at', Carbon::now()->month)
             ->sum('total');
             
         $weeklySales = Sale::where('user_id', $userId)
-            ->whereBetween('sale_date', [Carbon::now()->startOfWeek(), Carbon::now()->endOfWeek()])
+            ->whereBetween('created_at', [Carbon::now()->startOfWeek(), Carbon::now()->endOfWeek()])
             ->sum('total');
             
         // Estadísticas de compras

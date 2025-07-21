@@ -88,58 +88,64 @@ class ProductController extends Controller
     }
 
     public function update(Request $request, $id)
-    {
-        $userId = $request->user()->id;
-        $product = Product::where('user_id', $userId)->findOrFail($id);
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'price' => 'required|numeric|min:0',
-            'purchase_price' => 'required|numeric|min:0',
-            // ... otros campos si es necesario ...
-        ]);
+{
+    $userId = $request->user()->id;
+    $product = Product::where('user_id', $userId)->findOrFail($id);
+
+    // Fix: convertir string vacío a null para purchase_price
+    if ($request->has('purchase_price') && $request->input('purchase_price') === '') {
+        $request->merge(['purchase_price' => null]);
+    }
+
+    $request->validate([
+        'name' => 'sometimes|required|string|max:255',
+        'price' => 'sometimes|required|numeric|min:0',
+        'purchase_price' => 'nullable|numeric|min:0',
+        // ... otros campos si es necesario ...
+    ]);
+    
+    $data = $request->only([
+        'name', 'code', 'description', 'categoryId', 
+        'price', 'cost', 'profitMargin', 'stock', 'purchase_price'
+    ]);
+    
+    $data['category_id'] = $data['categoryId'] ?? null;
+    $data['profit_margin'] = $data['profitMargin'] ?? 30;
+    
+    $product->update($data);
+    
+    // Actualizar costos si se proporcionan
+    $totalCost = 0;
+    if ($request->has('costs') && is_array($request->costs)) {
+        // Eliminar costos existentes
+        $product->costs()->delete();
         
-        $data = $request->only([
-            'name', 'code', 'description', 'categoryId', 
-            'price', 'cost', 'profitMargin', 'stock', 'purchase_price'
-        ]);
-        
-        $data['category_id'] = $data['categoryId'] ?? null;
-        $data['profit_margin'] = $data['profitMargin'] ?? 30;
-        
-        $product->update($data);
-        
-        // Actualizar costos si se proporcionan
-        $totalCost = 0;
-        if ($request->has('costs') && is_array($request->costs)) {
-            // Eliminar costos existentes
-            $product->costs()->delete();
+        // Crear nuevos costos
+        foreach ($request->costs as $cost) {
+            ProductCost::create([
+                'product_id' => $product->id,
+                'ingredient_id' => $cost['ingredientId'],
+                'quantity' => $cost['quantity']
+            ]);
             
-            // Crear nuevos costos
-            foreach ($request->costs as $cost) {
-                ProductCost::create([
-                    'product_id' => $product->id,
-                    'ingredient_id' => $cost['ingredientId'],
-                    'quantity' => $cost['quantity']
-                ]);
-                
-                // Calcular el costo total
-                $ingredient = \App\Models\Ingredient::find($cost['ingredientId']);
-                if ($ingredient) {
-                    $totalCost += $ingredient->portion_cost * $cost['quantity'];
-                }
+            // Calcular el costo total
+            $ingredient = \App\Models\Ingredient::find($cost['ingredientId']);
+            if ($ingredient) {
+                $totalCost += $ingredient->portion_cost * $cost['quantity'];
             }
-            
-            // Actualizar el costo del producto
-            $product->update(['cost' => $totalCost]);
         }
         
-        $product->load(['category', 'costs.ingredient']);
-        
-        return response()->json([
-            'success' => true,
-            'data' => new ProductResource($product)
-        ]);
+        // Actualizar el costo del producto
+        $product->update(['cost' => $totalCost]);
     }
+    
+    $product->load(['category', 'costs.ingredient']);
+    
+    return response()->json([
+        'success' => true,
+        'data' => new ProductResource($product)
+    ]);
+}
 
     public function destroy(Request $request, $id)
     {

@@ -39,6 +39,7 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::apiResource('purchases', PurchaseController::class);
     // Ventas
     Route::apiResource('sales', SaleController::class);
+    Route::put('sales/{id}/reverse', [SaleController::class, 'reverse']);
     // Estadísticas de costos fijos
     Route::get('fixed-costs/stats', [FixedCostController::class, 'stats']);
     // Costos fijos

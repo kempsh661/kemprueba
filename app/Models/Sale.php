@@ -30,6 +30,9 @@ class Sale extends Model
         'items',
         'remaining_balance',
         'details',
+        'status',
+        'reversal_reason',
+        'reversed_at',
     ];
 
     protected $casts = [
@@ -43,7 +46,8 @@ class Sale extends Model
         'payments' => 'array',
         'items' => 'array',
         'details' => 'array',
-        'sale_date' => 'date',
+        'sale_date' => 'datetime',
+        'reversed_at' => 'datetime',
     ];
 
     public function user(): BelongsTo
