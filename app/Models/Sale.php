@@ -44,7 +44,6 @@ class Sale extends Model
         'change' => 'decimal:2',
         'remaining_balance' => 'decimal:2',
         'payments' => 'array',
-        'items' => 'array',
         'details' => 'array',
         'sale_date' => 'datetime',
         'reversed_at' => 'datetime',
@@ -63,5 +62,24 @@ class Sale extends Model
     public function creditPayments(): HasMany
     {
         return $this->hasMany(CreditPayment::class);
+    }
+
+    // Accessor para items - asegura que siempre devuelva un array
+    public function getItemsAttribute($value)
+    {
+        if (is_string($value)) {
+            return json_decode($value, true) ?: [];
+        }
+        return is_array($value) ? $value : [];
+    }
+
+    // Mutator para items - asegura que siempre se guarde como JSON
+    public function setItemsAttribute($value)
+    {
+        if (is_array($value)) {
+            $this->attributes['items'] = json_encode($value);
+        } else {
+            $this->attributes['items'] = $value;
+        }
     }
 }

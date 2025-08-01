@@ -31,19 +31,28 @@ class CreditController extends Controller
                 // Obtener todos los detalles de productos
                 $allDetails = [];
                 foreach ($customerSales as $sale) {
-                    if ($sale->items) {
-                        foreach ($sale->items as $item) {
-                            $product = \App\Models\Product::find($item['productId'] ?? 0);
-                            $allDetails[] = [
-                                'id' => $item['productId'] ?? 0,
-                                'productId' => $item['productId'] ?? 0,
-                                'quantity' => $item['quantity'] ?? 0,
-                                'price' => (float) ($item['price'] ?? 0),
-                                'product' => [
-                                    'name' => $product ? $product->name : 'Producto',
-                                    'code' => $product ? $product->code : 'PROD'
-                                ]
-                            ];
+                    // Asegurar que items sea un array
+                    $items = $sale->items;
+                    
+                    if (is_string($items)) {
+                        $items = json_decode($items, true);
+                    }
+                    
+                    if (is_array($items) && !empty($items)) {
+                        foreach ($items as $item) {
+                            if (is_array($item) && isset($item['productId'])) {
+                                $product = \App\Models\Product::find($item['productId'] ?? 0);
+                                $allDetails[] = [
+                                    'id' => $item['productId'] ?? 0,
+                                    'productId' => $item['productId'] ?? 0,
+                                    'quantity' => $item['quantity'] ?? 0,
+                                    'price' => (float) ($item['price'] ?? 0),
+                                    'product' => [
+                                        'name' => $product ? $product->name : 'Producto',
+                                        'code' => $product ? $product->code : 'PROD'
+                                    ]
+                                ];
+                            }
                         }
                     }
                 }
@@ -129,58 +138,95 @@ class CreditController extends Controller
         $userId = $request->user()->id;
         
         $request->validate([
-            'saleId' => 'required|exists:sales,id',
+            'customerDocument' => 'required|string',
             'amount' => 'required|numeric|min:0.01',
             'paymentMethod' => 'required|in:cash,card,transfer',
             'transactionNumber' => 'nullable|string',
             'cashReceived' => 'nullable|numeric|min:0'
         ]);
 
-        // Verificar que la venta pertenece al usuario
-        $sale = Sale::where('user_id', $userId)
-            ->where('id', $request->saleId)
-            ->firstOrFail();
+        // Obtener todas las ventas a crédito del cliente ordenadas por fecha (más antigua primero)
+        $customerSales = Sale::where('user_id', $userId)
+            ->where('customer_document', $request->customerDocument)
+            ->where(function ($query) {
+                $query->where('payment_method', 'credit')
+                      ->orWhere('payment_method', 'combined');
+            })
+            ->where('remaining_balance', '>', 0)
+            ->orderBy('created_at', 'asc')
+            ->get();
 
-        // Verificar que hay saldo pendiente
-        $remainingBalance = $sale->remaining_balance ?? $sale->total;
-        if ($remainingBalance <= 0) {
-            return response()->json(['error' => 'Esta venta ya está pagada'], 400);
+        if ($customerSales->isEmpty()) {
+            return response()->json(['error' => 'No se encontraron ventas pendientes para este cliente'], 400);
         }
 
-        // Verificar que el monto no exceda el saldo pendiente
-        if ($request->amount > $remainingBalance) {
-            return response()->json(['error' => 'El monto excede el saldo pendiente'], 400);
+        // Calcular el total pendiente del cliente
+        $totalRemainingBalance = $customerSales->sum('remaining_balance');
+        
+        // Verificar que el monto no exceda el total pendiente
+        if ($request->amount > $totalRemainingBalance) {
+            return response()->json([
+                'error' => 'El monto excede el saldo total pendiente',
+                'totalRemainingBalance' => $totalRemainingBalance
+            ], 400);
         }
 
         DB::beginTransaction();
         try {
-            // Crear el registro de pago
-            DB::table('credit_payments')->insert([
-                'sale_id' => $request->saleId,
-                'amount' => $request->amount,
-                'payment_method' => $request->paymentMethod,
-                'transaction_number' => $request->transactionNumber,
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
+            $remainingAmount = $request->amount;
+            $processedSales = [];
+            $totalProcessed = 0;
 
-            // Actualizar el saldo pendiente de la venta
-            $newRemainingBalance = $remainingBalance - $request->amount;
-            $sale->update([
-                'remaining_balance' => $newRemainingBalance
-            ]);
+            // Distribuir el pago entre las ventas (orden cronológico)
+            foreach ($customerSales as $sale) {
+                if ($remainingAmount <= 0) break;
+
+                $saleRemainingBalance = $sale->remaining_balance ?? $sale->total;
+                $amountToPay = min($remainingAmount, $saleRemainingBalance);
+
+                // Crear el registro de pago
+                DB::table('credit_payments')->insert([
+                    'sale_id' => $sale->id,
+                    'amount' => $amountToPay,
+                    'payment_method' => $request->paymentMethod,
+                    'transaction_number' => $request->transactionNumber,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+
+                // Actualizar el saldo pendiente de la venta
+                $newRemainingBalance = $saleRemainingBalance - $amountToPay;
+                $sale->update([
+                    'remaining_balance' => $newRemainingBalance
+                ]);
+
+                $processedSales[] = [
+                    'saleId' => $sale->id,
+                    'amountPaid' => $amountToPay,
+                    'remainingBalance' => $newRemainingBalance
+                ];
+
+                $totalProcessed += $amountToPay;
+                $remainingAmount -= $amountToPay;
+            }
 
             DB::commit();
 
+            // Calcular el nuevo total pendiente del cliente
+            $newTotalRemainingBalance = $totalRemainingBalance - $totalProcessed;
+
             return response()->json([
                 'success' => true,
-                'message' => 'Pago registrado exitosamente',
-                'remainingBalance' => $newRemainingBalance
+                'message' => 'Pago procesado exitosamente',
+                'amountProcessed' => $totalProcessed,
+                'totalRemainingBalance' => $newTotalRemainingBalance,
+                'processedSales' => $processedSales,
+                'customerDocument' => $request->customerDocument
             ]);
 
         } catch (\Exception $e) {
             DB::rollback();
-            return response()->json(['error' => 'Error al procesar el pago'], 500);
+            return response()->json(['error' => 'Error al procesar el pago: ' . $e->getMessage()], 500);
         }
     }
 }

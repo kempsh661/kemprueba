@@ -66,6 +66,7 @@ Route::middleware('api.auth:sanctum')->group(function () {
     // Créditos
     Route::get('credits/sales', [CreditController::class, 'sales']);
     Route::get('credits/payments', [CreditController::class, 'payments']);
+    Route::post('credits/payments', [CreditController::class, 'storePayment']);
     // Cuentas
     Route::apiResource('cuentas', CuentaController::class);
     // Cálculo manual de costos fijos para productos
