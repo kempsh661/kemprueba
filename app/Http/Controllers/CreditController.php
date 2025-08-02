@@ -12,13 +12,12 @@ class CreditController extends Controller
     {
         $userId = $request->user()->id;
         
-        // Obtener ventas a crédito y combinadas (con saldo pendiente) agrupadas por cliente
+        // Obtener ventas a crédito y combinadas (todas, incluyendo las pagadas) agrupadas por cliente
         $creditSales = Sale::where('user_id', $userId)
             ->where(function ($query) {
                 $query->where('payment_method', 'credit')
                       ->orWhere('payment_method', 'combined');
             })
-            ->where('remaining_balance', '>', 0)
             ->orderBy('created_at', 'desc')
             ->get()
             ->groupBy('customer_document')
@@ -84,7 +83,7 @@ class CreditController extends Controller
             })
             ->values();
 
-        // Calcular total de créditos pendientes
+        // Calcular total de créditos pendientes (solo los que tienen saldo pendiente)
         $totalPendingCredits = Sale::where('user_id', $userId)
             ->where(function ($query) {
                 $query->where('payment_method', 'credit')
