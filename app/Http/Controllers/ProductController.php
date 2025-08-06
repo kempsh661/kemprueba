@@ -190,4 +190,124 @@ class ProductController extends Controller
             'data' => $results
         ]);
     }
+
+    public function addStock(Request $request, $id)
+    {
+        $userId = $request->user()->id;
+        $product = Product::where('user_id', $userId)->findOrFail($id);
+        
+        $request->validate([
+            'quantity' => 'required|numeric|min:0',
+            'reason' => 'required|string|max:255'
+        ]);
+        
+        $previousStock = $product->stock;
+        $product->increment('stock', $request->quantity);
+        
+        // Registrar el movimiento de stock
+        \App\Models\StockMovement::create([
+            'user_id' => $userId,
+            'product_id' => $product->id,
+            'type' => 'entrada',
+            'quantity' => $request->quantity,
+            'description' => $request->reason
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Stock agregado exitosamente',
+            'data' => [
+                'previous_stock' => $previousStock,
+                'new_stock' => $product->stock,
+                'quantity_added' => $request->quantity
+            ]
+        ]);
+    }
+
+    public function reduceStock(Request $request, $id)
+    {
+        $userId = $request->user()->id;
+        $product = Product::where('user_id', $userId)->findOrFail($id);
+        
+        $request->validate([
+            'quantity' => 'required|numeric|min:0',
+            'reason' => 'required|string|max:255'
+        ]);
+        
+        if ($product->stock < $request->quantity) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Stock insuficiente para reducir'
+            ], 422);
+        }
+        
+        $previousStock = $product->stock;
+        $product->decrement('stock', $request->quantity);
+        
+        // Registrar el movimiento de stock
+        \App\Models\StockMovement::create([
+            'user_id' => $userId,
+            'product_id' => $product->id,
+            'type' => 'salida',
+            'quantity' => $request->quantity,
+            'description' => $request->reason
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Stock reducido exitosamente',
+            'data' => [
+                'previous_stock' => $previousStock,
+                'new_stock' => $product->stock,
+                'quantity_reduced' => $request->quantity
+            ]
+        ]);
+    }
+
+    public function stockMovement(Request $request, $id)
+    {
+        $userId = $request->user()->id;
+        $product = Product::where('user_id', $userId)->findOrFail($id);
+        
+        $request->validate([
+            'type' => 'required|in:in,out',
+            'quantity' => 'required|numeric|min:0',
+            'reason' => 'required|string|max:255'
+        ]);
+        
+        $previousStock = $product->stock;
+        $quantity = $request->quantity;
+        
+        if ($request->type === 'in') {
+            $product->increment('stock', $quantity);
+        } else {
+            if ($product->stock < $quantity) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stock insuficiente para reducir'
+                ], 422);
+            }
+            $product->decrement('stock', $quantity);
+        }
+        
+        // Registrar el movimiento de stock
+        \App\Models\StockMovement::create([
+            'user_id' => $userId,
+            'product_id' => $product->id,
+            'type' => $request->type === 'in' ? 'entrada' : 'salida',
+            'quantity' => $quantity,
+            'description' => $request->reason
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Movimiento de stock registrado exitosamente',
+            'data' => [
+                'previous_stock' => $previousStock,
+                'new_stock' => $product->stock,
+                'movement_type' => $request->type,
+                'quantity' => $quantity
+            ]
+        ]);
+    }
 }

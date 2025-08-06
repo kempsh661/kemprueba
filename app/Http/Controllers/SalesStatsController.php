@@ -16,34 +16,68 @@ class SalesStatsController extends Controller
     public function index(Request $request)
     {
         $userId = $request->user()->id ?? 1; // Temporal: userId 1 si no hay auth
-        $now = now(); // Ahora usa la zona horaria de Colombia configurada en app.php
-        $startOfMonth = $now->copy()->startOfMonth();
-        $startOfWeek = $now->copy()->startOfWeek();
-        $today = $now->copy()->startOfDay();
+        $month = $request->query('month');
+        
 
-        // Ventas del mes
+        
+        // Si no se proporciona un mes específico, usar el mes actual
+        if (!$month) {
+            $now = now(); // Ahora usa la zona horaria de Colombia configurada en app.php
+            $startOfMonth = $now->copy()->startOfMonth();
+            $endOfMonth = $now->copy()->endOfMonth();
+            $startOfWeek = $now->copy()->startOfWeek();
+            $today = $now->copy()->startOfDay();
+        } else {
+            // Parsear el mes proporcionado (formato: YYYY-MM)
+            $startOfMonth = \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+            $endOfMonth = \Carbon\Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+            $startOfWeek = $startOfMonth->copy()->startOfWeek();
+            $today = now()->copy()->startOfDay(); // Para ventas de hoy siempre usar la fecha actual
+        }
+
+        // Ventas del mes seleccionado
         $monthlySales = Sale::where('user_id', $userId)
-            ->where('created_at', '>=', $startOfMonth)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
             ->sum('total');
-        // Ventas de la semana
+            
+        // Ventas de la semana (siempre de la semana actual)
         $weeklySales = Sale::where('user_id', $userId)
-            ->where('created_at', '>=', $startOfWeek)
+            ->where('created_at', '>=', now()->copy()->startOfWeek())
             ->sum('total');
-        // Ventas de hoy
+            
+        // Ventas de hoy (siempre de hoy)
         $todaySales = Sale::where('user_id', $userId)
-            ->whereDate('created_at', $today)
+            ->whereDate('created_at', now()->toDateString())
             ->sum('total');
-        // Costos fijos del mes
+            
+        // Costos fijos del mes seleccionado
         $monthlyFixedCosts = FixedCost::where('user_id', $userId)
             ->where('is_active', true)
             ->where('frequency', 'MONTHLY')
+            ->whereBetween('updated_at', [$startOfMonth, $endOfMonth])
             ->sum('amount');
-        // Compras del mes
+            
+        // Compras del mes seleccionado
         $monthlyPurchases = Purchase::where('user_id', $userId)
-            ->where('date', '>=', $startOfMonth)
+            ->whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
             ->sum('amount');
+            
         // Ganancia o pérdida
-        $profitLoss = $monthlySales - $monthlyPurchases;
+        $profitLoss = $monthlySales - $monthlyPurchases - $monthlyFixedCosts;
+        
+        // Obtener estadísticas de productos
+        $totalProducts = \App\Models\Product::where('user_id', $userId)->count();
+        $totalBeverages = \App\Models\Ingredient::where('user_id', $userId)->count();
+        
+        // Productos con stock bajo
+        $lowStockProducts = \App\Models\Product::where('user_id', $userId)
+            ->where('stock', '<=', 10)
+            ->count();
+        $lowStockBeverages = \App\Models\Ingredient::where('user_id', $userId)
+            ->where('stock', '<=', 10)
+            ->count();
+        $lowStockItems = $lowStockProducts + $lowStockBeverages;
+        
         return response()->json([
             'success' => true,
             'data' => [
@@ -52,7 +86,13 @@ class SalesStatsController extends Controller
                 'todaySales' => $todaySales,
                 'monthlyPurchases' => $monthlyPurchases,
                 'monthlyFixedCosts' => $monthlyFixedCosts,
-                'profitLoss' => $profitLoss
+                'profitLoss' => $profitLoss,
+                'selectedMonth' => $month,
+                'startDate' => $startOfMonth->toDateString(),
+                'endDate' => $endOfMonth->toDateString(),
+                'totalProducts' => $totalProducts,
+                'totalBeverages' => $totalBeverages,
+                'lowStockItems' => $lowStockItems
             ]
         ]);
     }

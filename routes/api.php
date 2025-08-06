@@ -29,6 +29,7 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::get('account-balances', [AccountBalanceController::class, 'index']);
     Route::post('account-balances', [AccountBalanceController::class, 'store']);
     Route::get('account-balances/latest', [AccountBalanceController::class, 'latest']);
+    Route::get('account-balances/monthly', [AccountBalanceController::class, 'monthly']);
     Route::post('account-balances/close', [AccountBalanceController::class, 'closeCash']);
     Route::get('account-balances/debug-dates', [AccountBalanceController::class, 'debugDates']);
     Route::get('account-balances/debug-cash', [AccountBalanceController::class, 'debugCash']);
@@ -47,6 +48,9 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::apiResource('fixed-costs', FixedCostController::class);
     // Productos
     Route::apiResource('products', ProductController::class);
+    Route::post('products/{id}/add-stock', [ProductController::class, 'addStock']);
+    Route::post('products/{id}/reduce-stock', [ProductController::class, 'reduceStock']);
+    Route::post('products/{id}/stock', [ProductController::class, 'stockMovement']);
     // Categorías
     Route::apiResource('categories', CategoryController::class);
     // Clientes

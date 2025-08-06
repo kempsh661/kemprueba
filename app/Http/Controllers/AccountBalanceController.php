@@ -370,4 +370,86 @@ class AccountBalanceController extends Controller
             'data' => $debugInfo
         ]);
     }
+
+    // Obtener balance mensual
+    public function monthly(Request $request)
+    {
+        $userId = $request->user()->id ?? 1;
+        $month = $request->query('month');
+        
+
+        
+        if (!$month) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El parámetro month es requerido'
+            ], 400);
+        }
+
+        // Parsear el mes (formato: YYYY-MM) usando Carbon
+        $startOfMonth = \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+        $endOfMonth = \Carbon\Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+        
+
+
+        // Obtener ventas del mes
+        $monthlySales = Sale::where('user_id', $userId)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->get();
+
+
+
+        // Calcular totales por método de pago
+        $cashTotal = $monthlySales->where('payment_method', 'CASH')->sum('total');
+        $cardTotal = $monthlySales->where('payment_method', 'CARD')->sum('total');
+        $transferTotal = $monthlySales->where('payment_method', 'TRANSFER')->sum('total');
+        $totalSales = $monthlySales->sum('total');
+
+        // Obtener compras del mes
+        $monthlyPurchases = Purchase::where('user_id', $userId)
+            ->whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+            ->sum('amount');
+
+        // Obtener costos fijos del mes
+        $monthlyFixedCosts = FixedCost::where('user_id', $userId)
+            ->where('is_active', true)
+            ->where('is_paid', true)
+            ->whereBetween('updated_at', [$startOfMonth, $endOfMonth])
+            ->sum('amount');
+
+        $totalExpenses = $monthlyPurchases + $monthlyFixedCosts;
+        $netProfit = $totalSales - $totalExpenses;
+
+        // Obtener estadísticas de productos
+        $totalProducts = \App\Models\Product::where('user_id', $userId)->count();
+        $totalBeverages = \App\Models\Ingredient::where('user_id', $userId)->count();
+        
+        // Productos con stock bajo
+        $lowStockProducts = \App\Models\Product::where('user_id', $userId)
+            ->where('stock', '<=', 10)
+            ->count();
+        $lowStockBeverages = \App\Models\Ingredient::where('user_id', $userId)
+            ->where('stock', '<=', 10)
+            ->count();
+        $lowStockItems = $lowStockProducts + $lowStockBeverages;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'month' => $month,
+                'totalSales' => $totalSales,
+                'totalPurchases' => $monthlyPurchases,
+                'netProfit' => $netProfit,
+                'totalProducts' => $totalProducts,
+                'totalBeverages' => $totalBeverages,
+                'lowStockItems' => $lowStockItems,
+                'cashTotal' => $cashTotal,
+                'cardTotal' => $cardTotal,
+                'transferTotal' => $transferTotal,
+                'expenses' => $totalExpenses,
+                'startDate' => $startOfMonth->toDateString(),
+                'endDate' => $endOfMonth->toDateString()
+            ]
+        ]);
+    }
 }
