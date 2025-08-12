@@ -37,12 +37,14 @@ class FixedCost extends Model
 
     public function getIsActiveAttribute($value)
     {
-        return $this->attributes['is_active'];
+        // Si hay un valor asignado dinámicamente, usarlo; si no, usar el de la DB
+        return isset($this->attributes['isActive']) ? $this->attributes['isActive'] : $this->attributes['is_active'];
     }
 
     public function getIsPaidAttribute($value)
     {
-        return $this->attributes['is_paid'];
+        // Si hay un valor asignado dinámicamente, usarlo; si no, usar el de la DB
+        return isset($this->attributes['isPaid']) ? $this->attributes['isPaid'] : $this->attributes['is_paid'];
     }
 
     public function user(): BelongsTo

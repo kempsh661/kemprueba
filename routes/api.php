@@ -31,6 +31,7 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::get('account-balances/latest', [AccountBalanceController::class, 'latest']);
     Route::get('account-balances/monthly', [AccountBalanceController::class, 'monthly']);
     Route::post('account-balances/close', [AccountBalanceController::class, 'closeCash']);
+    Route::get('account-balances/history', [AccountBalanceController::class, 'getCashHistory']);
     Route::get('account-balances/debug-dates', [AccountBalanceController::class, 'debugDates']);
     Route::get('account-balances/debug-cash', [AccountBalanceController::class, 'debugCash']);
     Route::get('sales-stats', [SalesStatsController::class, 'index']);
@@ -43,6 +44,7 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::put('sales/{id}/reverse', [SaleController::class, 'reverse']);
     // Estadísticas de costos fijos
     Route::get('fixed-costs/stats', [FixedCostController::class, 'stats']);
+    Route::get('fixed-costs/missing-periods', [FixedCostController::class, 'missing']);
     // Costos fijos
     Route::patch('fixed-costs/{id}/toggle-payment', [FixedCostController::class, 'togglePayment']);
     Route::apiResource('fixed-costs', FixedCostController::class);

@@ -142,12 +142,14 @@ class AccountBalanceController extends Controller
     {
         $userId = $request->user()->id ?? 1; // Temporal: userId 1 si no hay auth
         $todayString = now('America/Bogota')->toDateString();
+        
         // Buscar el balance más reciente de hoy que NO esté cerrado
         $latest = AccountBalance::where('user_id', $userId)
             ->where('date', $todayString)
             ->where('is_closed', false)
             ->orderBy('created_at', 'desc')
             ->first();
+            
         // Si no hay balance abierto de hoy, buscar el más reciente de cualquier fecha
         if (!$latest) {
             $latest = AccountBalance::where('user_id', $userId)
@@ -218,13 +220,15 @@ class AccountBalanceController extends Controller
             ]);
         }
         
-        // Calcular balance de apertura (balance anterior)
-        $previousBalance = AccountBalance::where('user_id', $userId)
-            ->where('date', '<', $latest->date)
-            ->orderBy('date', 'desc')
+        // CORRECCIÓN: Calcular balance de apertura basado en la sesión anterior, no en fechas anteriores
+        // Buscar el balance más reciente que esté cerrado (sesión anterior)
+        $previousSession = AccountBalance::where('user_id', $userId)
+            ->where('is_closed', true)
+            ->orderBy('created_at', 'desc')
             ->first();
             
-        $openingBalance = $previousBalance ? $previousBalance->total_balance : 0;
+        // Si no hay sesión anterior cerrada, usar 0 como balance de apertura
+        $openingBalance = $previousSession ? $previousSession->total_balance : 0;
         
         // Calcular balance de cierre (balance actual)
         $closingBalance = $latest->total_balance;
@@ -263,9 +267,11 @@ class AccountBalanceController extends Controller
     {
         $userId = $request->user()->id ?? 1;
         
-        // Buscar el balance más reciente
+        // Buscar el balance más reciente de hoy que NO esté cerrado
         $latest = AccountBalance::where('user_id', $userId)
-            ->orderBy('date', 'desc')
+            ->where('date', now('America/Bogota')->toDateString())
+            ->where('is_closed', false)
+            ->orderBy('created_at', 'desc')
             ->first();
             
         if (!$latest) {
@@ -283,7 +289,43 @@ class AccountBalanceController extends Controller
         
         return response()->json([
             'success' => true,
-            'message' => 'Caja cerrada exitosamente'
+            'message' => 'Caja cerrada exitosamente',
+            'data' => [
+                'id' => $latest->id,
+                'closingBalance' => $latest->total_balance,
+                'closedAt' => $latest->updated_at
+            ]
+        ]);
+    }
+    
+    // Método para obtener historial de sesiones de caja
+    public function getCashHistory(Request $request)
+    {
+        $userId = $request->user()->id ?? 1;
+        $limit = $request->get('limit', 10);
+        
+        // Obtener las últimas sesiones de caja (abiertas y cerradas)
+        $sessions = AccountBalance::where('user_id', $userId)
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get()
+            ->map(function ($session) {
+                return [
+                    'id' => $session->id,
+                    'date' => $session->date,
+                    'openingBalance' => $session->cash_balance,
+                    'totalBalance' => $session->total_balance,
+                    'isClosed' => $session->is_closed,
+                    'notes' => $session->notes,
+                    'openedAt' => $session->created_at,
+                    'closedAt' => $session->is_closed ? $session->updated_at : null,
+                    'type' => $session->type
+                ];
+            });
+            
+        return response()->json([
+            'success' => true,
+            'data' => $sessions
         ]);
     }
     
