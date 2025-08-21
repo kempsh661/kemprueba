@@ -191,6 +191,241 @@ class ProductController extends Controller
         ]);
     }
 
+    public function calculateFixedCosts(Request $request)
+    {
+        $userId = $request->user()->id;
+        $data = $request->validate([
+            'productId' => 'required|integer|exists:products,id',
+            'period' => 'required|string|in:lastMonth,lastQuarter,lastYear,custom',
+            'workingDays' => 'required|integer|min:1|max:31',
+            'weeks' => 'required|integer|min:1|max:52',
+            'profitMargin' => 'required|numeric|min:0|max:100',
+        ]);
+
+        try {
+            // Obtener el producto
+            $product = Product::where('user_id', $userId)->findOrFail($data['productId']);
+            
+            // Obtener costos fijos del período
+            $fixedCosts = \App\Models\FixedCost::where('user_id', $userId)
+                ->where('is_paid', true)
+                ->get();
+            
+            $totalFixedCosts = $fixedCosts->sum('amount');
+            
+            // Calcular costos por período
+            $periodMultiplier = $this->getPeriodMultiplier($data['period'], $data['workingDays'], $data['weeks']);
+            $totalFixedCostsForPeriod = $totalFixedCosts * $periodMultiplier;
+            
+            // Obtener estadísticas de ventas del producto (simulado por ahora)
+            $estimatedSales = $this->estimateProductSales($product, $data['period']);
+            
+            if ($estimatedSales <= 0) {
+                // Si no hay ventas estimadas, solicitar input manual
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'needsManualInput' => true,
+                        'message' => 'No hay suficientes datos de ventas para calcular automáticamente. Por favor, ingrese manualmente las unidades vendidas.',
+                        'product' => [
+                            'id' => $product->id,
+                            'name' => $product->name,
+                            'estimatedSales' => 0
+                        ]
+                    ]
+                ]);
+            }
+            
+            // Calcular costo fijo por unidad usando sistema ponderado
+            $fixedCostPerUnit = $this->calculateWeightedFixedCost($product, $totalFixedCostsForPeriod, $data['period']);
+            
+            // Calcular costo total por unidad
+            $totalCostPerUnit = ($product->cost ?? 0) + $fixedCostPerUnit;
+            
+            // Calcular precio de venta recomendado
+            $recommendedPrice = $totalCostPerUnit / (1 - ($data['profitMargin'] / 100));
+            
+            $results = [
+                'needsManualInput' => false,
+                'product' => [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'cost' => $product->cost ?? 0,
+                    'currentPrice' => $product->price ?? 0,
+                    'estimatedSales' => $estimatedSales
+                ],
+                'fixedCosts' => [
+                    'total' => $totalFixedCosts,
+                    'periodMultiplier' => $periodMultiplier,
+                    'totalForPeriod' => $totalFixedCostsForPeriod,
+                    'perUnit' => round($fixedCostPerUnit, 2)
+                ],
+                'costAnalysis' => [
+                    'variableCost' => $product->cost ?? 0,
+                    'fixedCost' => round($fixedCostPerUnit, 2),
+                    'totalCost' => round($totalCostPerUnit, 2),
+                    'profitMargin' => $data['profitMargin'],
+                    'recommendedPrice' => round($recommendedPrice, 2),
+                    'currentProfit' => $product->price ? round((($product->price - $totalCostPerUnit) / $product->price) * 100, 2) : 0
+                ]
+            ];
+            
+            return response()->json([
+                'success' => true,
+                'data' => $results
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al calcular costos: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    private function getPeriodMultiplier($period, $workingDays, $weeks)
+    {
+        switch ($period) {
+            case 'lastMonth':
+                return 1;
+            case 'lastQuarter':
+                return 3;
+            case 'lastYear':
+                return 12;
+            case 'custom':
+                return ($weeks * $workingDays) / 22; // 22 días laborales promedio por mes
+            default:
+                return 1;
+        }
+    }
+
+    private function estimateProductSales($product, $period)
+    {
+        $userId = $product->user_id;
+        
+        // Calcular el rango de fechas según el período
+        $endDate = now();
+        $startDate = match($period) {
+            'lastMonth' => now()->subMonth(),
+            'lastQuarter' => now()->subMonths(3),
+            'lastYear' => now()->subYear(),
+            'custom' => now()->subMonth(), // Por defecto último mes
+            default => now()->subMonth(),
+        };
+        
+        // Buscar ventas del producto en el período
+        $sales = \App\Models\Sale::where('user_id', $userId)
+            ->whereBetween('sale_date', [$startDate, $endDate])
+            ->where('status', 'COMPLETED')
+            ->get();
+        
+        $totalQuantity = 0;
+        
+        foreach ($sales as $sale) {
+            $items = $sale->items;
+            if (is_string($items)) {
+                $items = json_decode($items, true);
+            }
+            
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    if (isset($item['productId']) && $item['productId'] == $product->id) {
+                        $totalQuantity += $item['quantity'] ?? 0;
+                    }
+                }
+            }
+        }
+        
+        \Log::info('Estimación de ventas calculada', [
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'period' => $period,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+            'total_sales_found' => $sales->count(),
+            'total_quantity' => $totalQuantity
+        ]);
+        
+        return $totalQuantity;
+    }
+
+    private function calculateWeightedFixedCost($product, $totalFixedCosts, $period)
+    {
+        $userId = $product->user_id;
+        
+        // Obtener todos los productos del usuario
+        $allProducts = Product::where('user_id', $userId)->get();
+        
+        // Calcular ventas y pesos ponderados para todos los productos
+        $productSalesData = [];
+        $totalWeightedSales = 0;
+        
+        foreach ($allProducts as $prod) {
+            $sales = $this->estimateProductSales($prod, $period);
+            $weight = $prod->cost_weight ?? 1.0;
+            $isMain = $prod->is_main_product ?? false;
+            
+            // Si es producto principal, usar peso completo
+            // Si es producto secundario, reducir el peso considerablemente
+            $adjustedWeight = $isMain ? $weight : ($weight * 0.1); // Productos secundarios solo 10% del peso
+            
+            $weightedSales = $sales * $adjustedWeight;
+            $totalWeightedSales += $weightedSales;
+            
+            $productSalesData[] = [
+                'product' => $prod,
+                'sales' => $sales,
+                'weight' => $weight,
+                'adjusted_weight' => $adjustedWeight,
+                'weighted_sales' => $weightedSales,
+                'is_main' => $isMain
+            ];
+        }
+        
+        // Calcular el porcentaje que le corresponde al producto específico
+        $currentProductData = collect($productSalesData)->firstWhere('product.id', $product->id);
+        
+        if (!$currentProductData || $totalWeightedSales == 0) {
+            \Log::warning('No se pudieron calcular costos ponderados', [
+                'product_id' => $product->id,
+                'total_weighted_sales' => $totalWeightedSales
+            ]);
+            return 0;
+        }
+        
+        $productPercentage = $currentProductData['weighted_sales'] / $totalWeightedSales;
+        $fixedCostForProduct = $totalFixedCosts * $productPercentage;
+        
+        // Si el producto no tiene ventas, asignar un costo mínimo
+        $productSales = $currentProductData['sales'];
+        if ($productSales == 0) {
+            \Log::info('Producto sin ventas - asignando costo mínimo', [
+                'product_id' => $product->id,
+                'product_name' => $product->name
+            ]);
+            return 500; // Costo fijo mínimo por unidad
+        }
+        
+        $fixedCostPerUnit = $fixedCostForProduct / $productSales;
+        
+        \Log::info('Cálculo de costos fijos ponderado', [
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'is_main_product' => $currentProductData['is_main'],
+            'weight' => $currentProductData['weight'],
+            'adjusted_weight' => $currentProductData['adjusted_weight'],
+            'product_sales' => $productSales,
+            'weighted_sales' => $currentProductData['weighted_sales'],
+            'total_weighted_sales' => $totalWeightedSales,
+            'product_percentage' => round($productPercentage * 100, 2) . '%',
+            'fixed_cost_for_product' => $fixedCostForProduct,
+            'fixed_cost_per_unit' => $fixedCostPerUnit,
+            'main_products_in_system' => collect($productSalesData)->where('is_main', true)->count()
+        ]);
+        
+        return $fixedCostPerUnit;
+    }
+
     public function addStock(Request $request, $id)
     {
         $userId = $request->user()->id;

@@ -17,6 +17,8 @@ class Product extends Model
         'profit_margin',
         'purchase_price',
         'stock',
+        'is_main_product',
+        'cost_weight',
     ];
 
     protected $casts = [
@@ -24,6 +26,8 @@ class Product extends Model
         'cost' => 'float',
         'profit_margin' => 'float',
         'stock' => 'integer',
+        'is_main_product' => 'boolean',
+        'cost_weight' => 'float',
     ];
 
     public function category()

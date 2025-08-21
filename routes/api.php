@@ -77,6 +77,8 @@ Route::middleware('api.auth:sanctum')->group(function () {
     Route::apiResource('cuentas', CuentaController::class);
     // Cálculo manual de costos fijos para productos
     Route::post('product-costs/calculate-fixed-costs-manual', [ProductController::class, 'calculateFixedCostsManual']);
+    // Cálculo automático de costos fijos para productos
+    Route::post('product-costs/calculate-fixed-costs', [ProductController::class, 'calculateFixedCosts']);
     // Usuarios
     Route::apiResource('users', UserController::class);
 });
