@@ -314,9 +314,16 @@ class ProductController extends Controller
         };
         
         // Buscar ventas del producto en el período
+        // Usar created_at si sale_date es null, ya que en producción sale_date está null
         $sales = \App\Models\Sale::where('user_id', $userId)
-            ->whereBetween('sale_date', [$startDate, $endDate])
             ->where('status', 'COMPLETED')
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->whereBetween('sale_date', [$startDate, $endDate])
+                      ->orWhere(function($subQuery) use ($startDate, $endDate) {
+                          $subQuery->whereNull('sale_date')
+                                   ->whereBetween('created_at', [$startDate, $endDate]);
+                      });
+            })
             ->get();
         
         $totalQuantity = 0;
@@ -329,10 +336,37 @@ class ProductController extends Controller
                 $items = json_decode($items, true);
             }
             
-            if (is_array($items)) {
+            if (is_array($items) && !empty($items)) {
                 foreach ($items as $item) {
                     if (isset($item['productId']) && $item['productId'] == $product->id) {
-                        $totalQuantity += $item['quantity'] ?? 0;
+                        $quantity = $item['quantity'] ?? 0;
+                        
+                        // Aplicar conversión de Pollo Completo a porciones individuales
+                        if ($product->id == 24) { // ID del Pollo Completo
+                            // No contar Pollo Completo directamente, se cuenta como porciones
+                            continue;
+                        }
+                        
+                        // Si es pechuga o pernil, agregar las cantidades del pollo completo convertidas
+                        if ($product->id == 1) { // Porción De Pechuga
+                            $totalQuantity += $quantity;
+                            // Buscar pollos completos en esta misma venta y agregar 2 porciones por cada pollo
+                            foreach ($items as $otherItem) {
+                                if (isset($otherItem['productId']) && $otherItem['productId'] == 24) {
+                                    $totalQuantity += ($otherItem['quantity'] ?? 0) * 2;
+                                }
+                            }
+                        } elseif ($product->id == 2) { // Porción de Pernil  
+                            $totalQuantity += $quantity;
+                            // Buscar pollos completos en esta misma venta y agregar 2 porciones por cada pollo
+                            foreach ($items as $otherItem) {
+                                if (isset($otherItem['productId']) && $otherItem['productId'] == 24) {
+                                    $totalQuantity += ($otherItem['quantity'] ?? 0) * 2;
+                                }
+                            }
+                        } else {
+                            $totalQuantity += $quantity;
+                        }
                     }
                 }
             }
@@ -345,6 +379,7 @@ class ProductController extends Controller
             'start_date' => $startDate->toDateString(),
             'end_date' => $endDate->toDateString(),
             'total_sales_found' => $sales->count(),
+            'sales_with_items' => $sales->filter(function($sale) { return !empty($sale->items); })->count(),
             'total_quantity' => $totalQuantity
         ]);
         
