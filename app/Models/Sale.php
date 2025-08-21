@@ -44,6 +44,7 @@ class Sale extends Model
         'change' => 'decimal:2',
         'remaining_balance' => 'decimal:2',
         'payments' => 'array',
+        'items' => 'array',
         'details' => 'array',
         'sale_date' => 'datetime',
         'reversed_at' => 'datetime',

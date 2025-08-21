@@ -323,6 +323,8 @@ class ProductController extends Controller
         
         foreach ($sales as $sale) {
             $items = $sale->items;
+            
+            // Manejar tanto string JSON como array
             if (is_string($items)) {
                 $items = json_decode($items, true);
             }
