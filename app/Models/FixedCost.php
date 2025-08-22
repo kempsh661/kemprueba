@@ -57,4 +57,9 @@ class FixedCost extends Model
     {
         return $this->hasMany(Purchase::class);
     }
+
+    public function periods(): HasMany
+    {
+        return $this->hasMany(FixedCostPeriod::class);
+    }
 }

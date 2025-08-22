@@ -43,6 +43,17 @@ class FixedCostController extends Controller
                 }
                 return $cost;
             });
+        } else {
+            // Si no hay mes especificado, usar valores por defecto de la base de datos
+            $fixedCosts = $fixedCosts->map(function ($cost) {
+                $cost->isActive = $cost->is_active;
+                $cost->isPaid = false; // Para el contexto de compras, siempre mostrar como disponible
+                $cost->partialAmount = null;
+                $cost->paidAmount = null;
+                $cost->hasPartialPayment = false;
+                $cost->paymentNotes = null;
+                return $cost;
+            });
         }
         
         return response()->json([
