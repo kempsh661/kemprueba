@@ -13,6 +13,16 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\IngredientController;
 use App\Http\Controllers\StockMovementController;
+
+// Endpoint de debug para verificar conectividad
+Route::get('/debug/health', function () {
+    return response()->json([
+        'status' => 'ok',
+        'timestamp' => now(),
+        'version' => '2.0',
+        'commit' => '6793e08'
+    ]);
+});
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\CuentaController;
 use App\Http\Controllers\UserController;
