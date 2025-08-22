@@ -23,13 +23,22 @@ class FixedCostController extends Controller
 
             $fixedCosts = $fixedCosts->map(function ($cost) use ($periods) {
                 if (isset($periods[$cost->id])) {
-                    $cost->isActive = $periods[$cost->id]->is_active;
-                    $cost->isPaid = $periods[$cost->id]->is_paid;
+                    $period = $periods[$cost->id];
+                    $cost->isActive = $period->is_active;
+                    $cost->isPaid = $period->is_paid;
+                    $cost->partialAmount = $period->partial_amount;
+                    $cost->paidAmount = $period->paid_amount;
+                    $cost->hasPartialPayment = !empty($period->partial_amount);
+                    $cost->paymentNotes = $period->notes;
                 } else {
                     // En contexto mensual, si no hay periodo, considerar no pagado por defecto
                     if ($cost->frequency === 'MONTHLY') {
                         $cost->isActive = true; // Por defecto activo
                         $cost->isPaid = false;  // Por defecto no pagado
+                        $cost->partialAmount = null;
+                        $cost->paidAmount = null;
+                        $cost->hasPartialPayment = false;
+                        $cost->paymentNotes = null;
                     }
                 }
                 return $cost;

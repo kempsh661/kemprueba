@@ -104,8 +104,18 @@ class PurchaseController extends Controller
     public function store(Request $request)
     {
         $userId = $request->user()->id;
-        $data = $request->only(['amount', 'date', 'category', 'concept', 'notes']);
+        $data = $request->only(['amount', 'date', 'category', 'concept', 'notes', 'fixedCostId', 'isPartialPayment']);
         $data['user_id'] = $userId;
+        
+        // Mapear campos del frontend
+        if (isset($data['fixedCostId'])) {
+            $data['fixed_cost_id'] = $data['fixedCostId'];
+            unset($data['fixedCostId']);
+        }
+        if (isset($data['isPartialPayment'])) {
+            $data['is_partial_payment'] = $data['isPartialPayment'];
+            unset($data['isPartialPayment']);
+        }
         
         // Validar fecha
         if (isset($data['date'])) {
@@ -113,6 +123,43 @@ class PurchaseController extends Controller
         }
         
         $purchase = Purchase::create($data);
+        
+        // Si está relacionado con un costo fijo, actualizar su estado
+        if ($purchase->fixed_cost_id) {
+            $fixedCost = \App\Models\FixedCost::find($purchase->fixed_cost_id);
+            if ($fixedCost) {
+                // Obtener el mes actual
+                $currentMonth = Carbon::parse($data['date'])->format('Y-m');
+                
+                // Determinar el nuevo estado según si es pago parcial o completo
+                if ($purchase->is_partial_payment) {
+                    // Crear o actualizar el período como "abonado" (aún no completamente pagado)
+                    \App\Models\FixedCostPeriod::updateOrCreate([
+                        'user_id' => $userId,
+                        'fixed_cost_id' => $fixedCost->id,
+                        'month' => $currentMonth,
+                    ], [
+                        'is_active' => true,
+                        'is_paid' => false, // Mantener como no pagado pero con abono
+                        'partial_amount' => $purchase->amount,
+                        'notes' => 'Pago parcial realizado'
+                    ]);
+                } else {
+                    // Marcar como completamente pagado
+                    \App\Models\FixedCostPeriod::updateOrCreate([
+                        'user_id' => $userId,
+                        'fixed_cost_id' => $fixedCost->id,
+                        'month' => $currentMonth,
+                    ], [
+                        'is_active' => true,
+                        'is_paid' => true,
+                        'paid_amount' => $purchase->amount,
+                        'notes' => 'Pago completo realizado'
+                    ]);
+                }
+            }
+        }
+        
         $purchase->load('user');
         
         return response()->json($purchase, 201);
