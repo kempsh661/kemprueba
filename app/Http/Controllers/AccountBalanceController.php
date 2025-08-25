@@ -397,13 +397,19 @@ class AccountBalanceController extends Controller
             ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
             ->get();
 
-
-
-        // Calcular totales por método de pago
-        $cashTotal = $monthlySales->where('payment_method', 'CASH')->sum('total');
-        $cardTotal = $monthlySales->where('payment_method', 'CARD')->sum('total');
-        $transferTotal = $monthlySales->where('payment_method', 'TRANSFER')->sum('total');
-        $totalSales = $monthlySales->sum('total');
+        // Calcular totales por método de pago - SOLO DINERO REALMENTE RECIBIDO
+        // Para cada venta, usar (total - remaining_balance) que representa lo realmente pagado
+        $cashTotal = $monthlySales->where('payment_method', 'CASH')
+            ->sum(function($sale) { return $sale->total - ($sale->remaining_balance ?? 0); });
+        $cardTotal = $monthlySales->where('payment_method', 'CARD')
+            ->sum(function($sale) { return $sale->total - ($sale->remaining_balance ?? 0); });
+        $transferTotal = $monthlySales->where('payment_method', 'TRANSFER')
+            ->sum(function($sale) { return $sale->total - ($sale->remaining_balance ?? 0); });
+        
+        // Total de ventas realmente recibidas (excluyendo saldos pendientes de crédito)
+        $totalSales = $monthlySales->sum(function($sale) { 
+            return $sale->total - ($sale->remaining_balance ?? 0); 
+        });
 
         // Obtener compras del mes
         $monthlyPurchases = Purchase::where('user_id', $userId)
@@ -418,6 +424,7 @@ class AccountBalanceController extends Controller
             ->sum('amount');
 
         $totalExpenses = $monthlyPurchases + $monthlyFixedCosts;
+        // Ganancia neta basada en dinero realmente recibido (no incluye créditos pendientes)
         $netProfit = $totalSales - $totalExpenses;
 
         // Obtener estadísticas de productos

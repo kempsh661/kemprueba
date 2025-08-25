@@ -461,21 +461,23 @@ class SaleController extends Controller
     {
         $userId = $request->user()->id;
         
-        // Estadísticas de ventas
+        // Estadísticas de ventas - SOLO DINERO REALMENTE RECIBIDO
         $monthlySales = Sale::where('user_id', $userId)
             ->whereMonth('sale_date', Carbon::now()->month)
-            ->sum('total');
+            ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
+            ->value('paid_amount');
             
         $weeklySales = Sale::where('user_id', $userId)
             ->whereBetween('sale_date', [Carbon::now()->startOfWeek(), Carbon::now()->endOfWeek()])
-            ->sum('total');
+            ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
+            ->value('paid_amount');
             
         // Estadísticas de compras
         $monthlyPurchases = Purchase::where('user_id', $userId)
             ->whereMonth('created_at', Carbon::now()->month)
-            ->sum('total');
+            ->sum('amount'); // Cambiado de 'total' a 'amount' (campo correcto en Purchase)
             
-        // Cálculo de ganancia/pérdida
+        // Cálculo de ganancia/pérdida - Basado en dinero realmente recibido
         $profitLoss = $monthlySales - $monthlyPurchases;
         
         return response()->json([
