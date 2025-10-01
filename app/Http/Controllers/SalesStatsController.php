@@ -38,19 +38,37 @@ class SalesStatsController extends Controller
         // Ventas del mes seleccionado - SOLO DINERO REALMENTE RECIBIDO
         // Incluye: ventas completas pagadas + cantidad pagada de ventas a crédito
         $monthlySales = Sale::where('user_id', $userId)
-            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->where(function($query) use ($startOfMonth, $endOfMonth) {
+                $query->whereBetween('sale_date', [$startOfMonth, $endOfMonth])
+                      ->orWhere(function($subQuery) use ($startOfMonth, $endOfMonth) {
+                          $subQuery->whereNull('sale_date')
+                                   ->whereBetween('created_at', [$startOfMonth, $endOfMonth]);
+                      });
+            })
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
             ->value('paid_amount');
             
         // Ventas de la semana (siempre de la semana actual) - SOLO DINERO REALMENTE RECIBIDO
         $weeklySales = Sale::where('user_id', $userId)
-            ->where('created_at', '>=', now()->copy()->startOfWeek())
+            ->where(function($query) {
+                $query->where('sale_date', '>=', now()->copy()->startOfWeek())
+                      ->orWhere(function($subQuery) {
+                          $subQuery->whereNull('sale_date')
+                                   ->where('created_at', '>=', now()->copy()->startOfWeek());
+                      });
+            })
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
             ->value('paid_amount');
             
         // Ventas de hoy (siempre de hoy) - SOLO DINERO REALMENTE RECIBIDO
         $todaySales = Sale::where('user_id', $userId)
-            ->whereDate('created_at', now()->toDateString())
+            ->where(function($query) {
+                $query->whereDate('sale_date', now()->toDateString())
+                      ->orWhere(function($subQuery) {
+                          $subQuery->whereNull('sale_date')
+                                   ->whereDate('created_at', now()->toDateString());
+                      });
+            })
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
             ->value('paid_amount');
             

@@ -172,7 +172,13 @@ class AccountBalanceController extends Controller
         $today = now()->startOfDay();
         
         $todaySales = \App\Models\Sale::where('user_id', $userId)
-            ->whereDate('created_at', $today)
+            ->where(function($query) use ($today) {
+                $query->whereDate('sale_date', $today)
+                      ->orWhere(function($subQuery) use ($today) {
+                          $subQuery->whereNull('sale_date')
+                                   ->whereDate('created_at', $today);
+                      });
+            })
             ->get();
             
         // Calcular totales por método de pago
@@ -311,7 +317,13 @@ class AccountBalanceController extends Controller
                     ];
                 }),
             'today_sales_count' => \App\Models\Sale::where('user_id', $userId)
-                ->whereDate('created_at', now()->toDateString())
+                ->where(function($query) {
+                    $query->whereDate('sale_date', now()->toDateString())
+                          ->orWhere(function($subQuery) {
+                              $subQuery->whereNull('sale_date')
+                                       ->whereDate('created_at', now()->toDateString());
+                          });
+                })
                 ->count()
         ];
         
@@ -394,7 +406,13 @@ class AccountBalanceController extends Controller
 
         // Obtener ventas del mes
         $monthlySales = Sale::where('user_id', $userId)
-            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->where(function($query) use ($startOfMonth, $endOfMonth) {
+                $query->whereBetween('sale_date', [$startOfMonth, $endOfMonth])
+                      ->orWhere(function($subQuery) use ($startOfMonth, $endOfMonth) {
+                          $subQuery->whereNull('sale_date')
+                                   ->whereBetween('created_at', [$startOfMonth, $endOfMonth]);
+                      });
+            })
             ->get();
 
         // Calcular totales por método de pago - SOLO DINERO REALMENTE RECIBIDO
