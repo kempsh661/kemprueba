@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Sale;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class CreditController extends Controller
 {
@@ -12,12 +12,25 @@ class CreditController extends Controller
     {
         $userId = $request->user()->id;
         
-        // Obtener ventas a crédito y combinadas (todas, incluyendo las pagadas) agrupadas por cliente
+        // Cache key para ventas a crédito
+        $cacheKey = "credit_sales_{$userId}";
+        $cacheDuration = 300; // 5 minutos
+        
+        // Intentar obtener del cache
+        $cachedData = Cache::get($cacheKey);
+        if ($cachedData) {
+            return response()->json([
+                'success' => true,
+                'data' => $cachedData['data'],
+                'totalPendingCredits' => $cachedData['totalPendingCredits'],
+                'cached' => true
+            ]);
+        }
+        
+        // Obtener ventas a crédito y combinadas - OPTIMIZADO con índices y solo campos necesarios
         $creditSales = Sale::where('user_id', $userId)
-            ->where(function ($query) {
-                $query->where('payment_method', 'credit')
-                      ->orWhere('payment_method', 'combined');
-            })
+            ->whereIn('payment_method', ['credit', 'combined'])
+            ->select(['customer_document', 'customer_name', 'customer_phone', 'customer_email', 'total', 'remaining_balance', 'cash_received', 'created_at', 'items', 'transaction_number'])
             ->orderBy('created_at', 'desc')
             ->get()
             ->groupBy('customer_document')
@@ -27,7 +40,7 @@ class CreditController extends Controller
                 $totalSales = $customerSales->sum('total');
                 $totalCashReceived = $customerSales->sum('cash_received');
                 
-                // Obtener todos los detalles de productos
+                // Obtener todos los detalles de productos - OPTIMIZADO
                 $allDetails = [];
                 foreach ($customerSales as $sale) {
                     // Asegurar que items sea un array
@@ -40,15 +53,15 @@ class CreditController extends Controller
                     if (is_array($items) && !empty($items)) {
                         foreach ($items as $item) {
                             if (is_array($item) && isset($item['productId'])) {
-                                $product = \App\Models\Product::find($item['productId'] ?? 0);
+                                // Evitar consultas N+1 - usar datos básicos
                                 $allDetails[] = [
                                     'id' => $item['productId'] ?? 0,
                                     'productId' => $item['productId'] ?? 0,
                                     'quantity' => $item['quantity'] ?? 0,
                                     'price' => (float) ($item['price'] ?? 0),
                                     'product' => [
-                                        'name' => $product ? $product->name : 'Producto',
-                                        'code' => $product ? $product->code : 'PROD'
+                                        'name' => $item['productName'] ?? 'Producto',
+                                        'code' => $item['productCode'] ?? 'PROD'
                                     ]
                                 ];
                             }
@@ -83,18 +96,25 @@ class CreditController extends Controller
             })
             ->values();
 
-        // Calcular total de créditos pendientes (solo los que tienen saldo pendiente)
+        // Calcular total de créditos pendientes - OPTIMIZADO con índices
         $totalPendingCredits = Sale::where('user_id', $userId)
-            ->where(function ($query) {
-                $query->where('payment_method', 'credit')
-                      ->orWhere('payment_method', 'combined');
-            })
+            ->whereIn('payment_method', ['credit', 'combined'])
             ->where('remaining_balance', '>', 0)
             ->sum('remaining_balance');
 
-        return response()->json([
+        $responseData = [
             'data' => $creditSales,
             'totalPendingCredits' => (float) $totalPendingCredits
+        ];
+        
+        // Guardar en cache
+        Cache::put($cacheKey, $responseData, $cacheDuration);
+
+        return response()->json([
+            'success' => true,
+            'data' => $creditSales,
+            'totalPendingCredits' => (float) $totalPendingCredits,
+            'cached' => false
         ]);
     }
 

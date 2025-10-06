@@ -7,7 +7,7 @@ use App\Models\AccountBalance;
 use App\Models\Sale;
 use App\Models\Purchase;
 use App\Models\FixedCost;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 
 class AccountBalanceController extends Controller
 {
