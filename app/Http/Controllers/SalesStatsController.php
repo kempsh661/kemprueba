@@ -36,7 +36,7 @@ class SalesStatsController extends Controller
 
         // Generar claves de cache únicas
         $cacheKey = "sales_stats_{$userId}_{$month}_" . ($month ?: 'current');
-        $cacheDuration = 300; // 5 minutos
+        $cacheDuration = 900; // 15 minutos (más agresivo)
 
         // Intentar obtener datos del cache primero
         $cachedData = Cache::get($cacheKey);
@@ -66,41 +66,23 @@ class SalesStatsController extends Controller
      */
     private function calculateStats($userId, $startOfMonth, $endOfMonth, $startOfWeek, $today, $month)
     {
-        // Ventas del mes seleccionado - OPTIMIZADO con índices
+        // Ventas del mes seleccionado - OPTIMIZADO solo con sale_date (más rápido)
         $monthlySales = Sale::where('user_id', $userId)
-            ->where(function($query) use ($startOfMonth, $endOfMonth) {
-                $query->whereBetween('sale_date', [$startOfMonth, $endOfMonth])
-                      ->orWhere(function($subQuery) use ($startOfMonth, $endOfMonth) {
-                          $subQuery->whereNull('sale_date')
-                                   ->whereBetween('created_at', [$startOfMonth, $endOfMonth]);
-                      });
-            })
+            ->whereBetween('sale_date', [$startOfMonth, $endOfMonth])
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
-            ->value('paid_amount');
+            ->value('paid_amount') ?? 0;
             
-        // Ventas de la semana (siempre de la semana actual) - OPTIMIZADO
+        // Ventas de la semana (siempre de la semana actual) - OPTIMIZADO solo con sale_date
         $weeklySales = Sale::where('user_id', $userId)
-            ->where(function($query) {
-                $query->where('sale_date', '>=', now()->copy()->startOfWeek())
-                      ->orWhere(function($subQuery) {
-                          $subQuery->whereNull('sale_date')
-                                   ->where('created_at', '>=', now()->copy()->startOfWeek());
-                      });
-            })
+            ->whereBetween('sale_date', [now()->copy()->startOfWeek(), now()->copy()->endOfWeek()])
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
-            ->value('paid_amount');
+            ->value('paid_amount') ?? 0;
             
-        // Ventas de hoy (siempre de hoy) - OPTIMIZADO
+        // Ventas de hoy (siempre de hoy) - OPTIMIZADO solo con sale_date
         $todaySales = Sale::where('user_id', $userId)
-            ->where(function($query) {
-                $query->whereDate('sale_date', now()->toDateString())
-                      ->orWhere(function($subQuery) {
-                          $subQuery->whereNull('sale_date')
-                                   ->whereDate('created_at', now()->toDateString());
-                      });
-            })
+            ->whereDate('sale_date', now()->toDateString())
             ->selectRaw('SUM(total - COALESCE(remaining_balance, 0)) as paid_amount')
-            ->value('paid_amount');
+            ->value('paid_amount') ?? 0;
             
         // Costos fijos del mes seleccionado - OPTIMIZADO con índices
         $monthlyFixedCosts = FixedCost::where('user_id', $userId)
