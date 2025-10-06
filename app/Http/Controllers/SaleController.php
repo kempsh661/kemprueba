@@ -7,12 +7,29 @@ use App\Models\Purchase;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 class SaleController extends Controller
 {
     public function index(Request $request)
     {
         $userId = $request->user()->id;
+        
+        // OPTIMIZACIÓN: Cache para búsquedas frecuentes
+        $cacheKey = "sales_search_{$userId}_" . md5(serialize($request->only(['date', 'customerDocument', 'customerName', 'per_page'])));
+        $cacheDuration = 300; // 5 minutos
+        
+        // Intentar obtener del cache
+        $cachedData = Cache::get($cacheKey);
+        if ($cachedData) {
+            return response()->json([
+                'success' => true,
+                'data' => $cachedData['data'],
+                'meta' => $cachedData['meta'],
+                'cached' => true
+            ]);
+        }
+        
         $query = Sale::where('user_id', $userId);
         
         // Búsqueda por fecha (solo en sale_date)
@@ -31,10 +48,15 @@ class SaleController extends Controller
             $query->where('customer_name', 'like', '%' . $request->customerName . '%');
         }
         
-        $sales = $query->orderBy('created_at', 'desc')->get();
+        // OPTIMIZACIÓN: Paginación para evitar cargar todas las ventas
+        $perPage = $request->get('per_page', 50); // Por defecto 50 registros
+        $sales = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        
+        // OPTIMIZACIÓN: Cargar todos los productos de una vez para evitar N+1 queries
+        $allProducts = \App\Models\Product::where('user_id', $userId)->get()->keyBy('id');
         
         // Transformar las ventas para que coincidan con la estructura esperada por el frontend
-        $transformedSales = $sales->map(function ($sale) {
+        $transformedSales = $sales->map(function ($sale) use ($allProducts) {
             // Calcular montos de efectivo y crédito para facturas
             $cashAmount = 0;
             $creditAmount = 0;
@@ -92,9 +114,9 @@ class SaleController extends Controller
                 'user' => [
                     'name' => $sale->user->name ?? 'Usuario'
                 ],
-                'details' => $sale->items ? array_map(function ($item) {
-                    // Buscar el producto real para obtener su nombre
-                    $product = \App\Models\Product::find($item['productId'] ?? 0);
+                'details' => $sale->items ? array_map(function ($item) use ($allProducts) {
+                    // OPTIMIZACIÓN: Usar productos ya cargados en lugar de consulta individual
+                    $product = $allProducts->get($item['productId'] ?? 0);
                     return [
                         'id' => $item['productId'] ?? 0,
                         'productId' => $item['productId'] ?? 0,
@@ -109,9 +131,27 @@ class SaleController extends Controller
             ];
         });
         
+        // Preparar respuesta con metadatos de paginación
+        $responseData = [
+            'data' => $transformedSales,
+            'meta' => [
+                'current_page' => $sales->currentPage(),
+                'last_page' => $sales->lastPage(),
+                'per_page' => $sales->perPage(),
+                'total' => $sales->total(),
+                'from' => $sales->firstItem(),
+                'to' => $sales->lastItem()
+            ]
+        ];
+        
+        // Guardar en cache
+        Cache::put($cacheKey, $responseData, $cacheDuration);
+        
         return response()->json([
             'success' => true,
-            'data' => $transformedSales
+            'data' => $transformedSales,
+            'meta' => $responseData['meta'],
+            'cached' => false
         ]);
     }
 
